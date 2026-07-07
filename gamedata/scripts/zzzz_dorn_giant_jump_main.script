@@ -1,0 +1,405 @@
+--[[
+	Dorn's Giant Jump
+
+	Jump or fall to dodge pseudogiant ground-slam damage.
+
+	GAMMA routes player stomps through grok_actor_damage_balancer's shit_booster
+	(often as hit.wound, not hit.strike). We hook that path directly.
+
+	Slam vs melee: engine stomps use hit.strike; melee uses hit.wound. Grok may
+	convert stomp to wound, so we also track stomp windows from
+	pseudogiant_on_start_stomp_animation (always fires, even when stomp object
+	damage cvar is off).
+]]
+
+local MOD_ID = "dorn_giant_jump"
+local DORN_COMMON_VERSION = "dorn_common_3ea88f51" -- managed by sync-dorn-common.sh, do not hand-edit
+
+local DORN
+
+local CONFIG = {
+	enabled = true,
+	debug_log = false,
+	debug_overlay = false,
+}
+
+local LOG = {
+	EVENT = { order = 0, color = "yellow" },
+}
+
+local HOOK_MARK = "__dorn_giant_jump_hook"
+
+-- threaten_effector time is 2.0s; add margin for animation + grok delay
+local STOMP_WINDOW_MS = 2800
+
+local shit_booster_hooked = false
+local actor_before_hit_hooked = false
+local stomp_anim_hooked = false
+
+-- giant_id -> time_global() ms when stomp window expires
+local stomp_windows = {}
+
+local function log(slot, msg)
+	if DORN and DORN.dbg and CONFIG.debug_overlay then
+		DORN.dbg.overlay(MOD_ID, slot.order, "[GiantJump] " .. tostring(msg), slot.color)
+	end
+end
+
+local function flog(fmt, ...)
+	local ok, msg = pcall(string.format, fmt, ...)
+	if not ok then
+		msg = tostring(fmt)
+	end
+	if DORN and DORN.dbg and CONFIG.debug_log then
+		DORN.dbg.log(MOD_ID, msg)
+	end
+	return msg
+end
+
+local function movement_state_str()
+	if not level or not level.actor_moving_state then
+		return "no_actor_moving_state"
+	end
+	local state = level.actor_moving_state()
+	local parts = {}
+	if IsMoveState and IsMoveState("mcJump", state) then
+		parts[#parts + 1] = "mcJump"
+	end
+	if IsMoveState and IsMoveState("mcFall", state) then
+		parts[#parts + 1] = "mcFall"
+	end
+	if IsMoveState and IsMoveState("mcLanding", state) then
+		parts[#parts + 1] = "mcLanding"
+	end
+	if IsMoveState and IsMoveState("mcLanding2", state) then
+		parts[#parts + 1] = "mcLanding2"
+	end
+	if #parts == 0 then
+		parts[#parts + 1] = "grounded"
+	end
+	return string.format("state=%d flags=%s", state, table.concat(parts, "+"))
+end
+
+local function obj_id(obj)
+	if not obj then
+		return nil
+	end
+	local ok, id = pcall(function() return obj:id() end)
+	return ok and id or nil
+end
+
+local function obj_id_str(obj)
+	local id = obj_id(obj)
+	return id and tostring(id) or "?"
+end
+
+local function obj_section_str(obj)
+	if not obj then
+		return "nil"
+	end
+	local ok, sec = pcall(function() return obj:section() end)
+	if ok and sec then
+		return tostring(sec)
+	end
+	return "?"
+end
+
+local function hit_type_str(shit)
+	if not shit or not shit.type then
+		return "?"
+	end
+	local ok, t = pcall(function() return shit.type end)
+	return ok and tostring(t) or "?"
+end
+
+local function now_ms()
+	if time_global then
+		return time_global()
+	end
+	return device and device():time_global() or 0
+end
+
+local function is_pseudogiant(obj)
+	if not obj then
+		return false
+	end
+	local ok, sec = pcall(function() return obj:section() end)
+	if ok and sec and string.find(sec, "gigant") then
+		return true
+	end
+	local ok_name, name = pcall(function() return obj:name() end)
+	return ok_name and name and string.find(name, "gigant") ~= nil
+end
+
+local function mark_giant_stomping(giant, tag)
+	local id = obj_id(giant)
+	if not id then
+		return
+	end
+	stomp_windows[id] = now_ms() + STOMP_WINDOW_MS
+	if CONFIG.debug_log then
+		flog(
+			"%s giant=%s(%s) window=%dms",
+			tag or "stomp_window",
+			obj_section_str(giant),
+			tostring(id),
+			STOMP_WINDOW_MS
+		)
+	end
+end
+
+local function giant_in_stomp_window(giant)
+	local id = obj_id(giant)
+	if not id then
+		return false
+	end
+	local expiry = stomp_windows[id]
+	if not expiry then
+		return false
+	end
+	if now_ms() > expiry then
+		stomp_windows[id] = nil
+		return false
+	end
+	return true
+end
+
+local function slam_reason(shit)
+	if not shit or not shit.draftsman or not is_pseudogiant(shit.draftsman) then
+		return nil
+	end
+	-- Engine only uses strike for pseudogiant ground slam (never melee).
+	if shit.type == hit.strike then
+		return "strike"
+	end
+	if shit.type == hit.wound and giant_in_stomp_window(shit.draftsman) then
+		return "stomp_window"
+	end
+	return nil
+end
+
+local function on_option_change()
+	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
+	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
+	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
+	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
+end
+
+local function actor_is_airborne()
+	if not level or not level.actor_moving_state then
+		return false
+	end
+	local state = level.actor_moving_state()
+	if IsMoveState then
+		return IsMoveState("mcJump", state) or IsMoveState("mcFall", state)
+	end
+	if not bit_and then
+		return false
+	end
+	return bit_and(state, 128 + 256) ~= 0
+end
+
+local function should_dodge_hit(shit, tag)
+	if not CONFIG.enabled then
+		return false
+	end
+
+	local reason = slam_reason(shit)
+	if not reason then
+		if CONFIG.debug_log and shit and shit.draftsman and is_pseudogiant(shit.draftsman) then
+			flog(
+				"%s ignored giant melee type=%s power=%s who=%s(%s) stomp_window=%s",
+				tag,
+				hit_type_str(shit),
+				tostring(shit.power),
+				obj_section_str(shit.draftsman),
+				obj_id_str(shit.draftsman),
+				tostring(giant_in_stomp_window(shit.draftsman))
+			)
+		end
+		return false
+	end
+
+	if CONFIG.debug_log then
+		flog(
+			"%s slam=%s type=%s power=%s who=%s(%s) %s airborne=%s",
+			tag,
+			reason,
+			hit_type_str(shit),
+			tostring(shit.power),
+			obj_section_str(shit.draftsman),
+			obj_id_str(shit.draftsman),
+			movement_state_str(),
+			tostring(actor_is_airborne())
+		)
+	end
+
+	if not actor_is_airborne() then
+		return false
+	end
+
+	flog(
+		"%s DODGED giant slam (%s) who=%s(%s) type=%s power=%s %s",
+		tag,
+		reason,
+		obj_section_str(shit.draftsman),
+		obj_id_str(shit.draftsman),
+		hit_type_str(shit),
+		tostring(shit.power),
+		movement_state_str()
+	)
+	log(LOG.EVENT, "Dodged giant slam while airborne")
+	return true
+end
+
+local function cancel_hit(shit, flags)
+	if shit then
+		shit.power = 0
+	end
+	if flags then
+		flags.ret_value = false
+	end
+end
+
+local function on_start_stomp_animation(victim, who)
+	if not CONFIG.enabled or not who then
+		return
+	end
+	mark_giant_stomping(who, "pseudogiant_on_start_stomp_animation")
+end
+
+local function on_before_stomp(victim, who, shit, bone_id, flags)
+	local ctx, actor = DORN.sys.ready(MOD_ID, db, on_option_change)
+	if not ctx or not flags or not CONFIG.enabled then
+		return
+	end
+	if who then
+		mark_giant_stomping(who, "pseudogiant_before_stomp")
+	end
+	if not victim or not actor or victim:id() ~= actor:id() then
+		return
+	end
+	if actor_is_airborne() then
+		flags.ret_value = false
+		flog("CB pseudogiant_before_stomp DODGED")
+		log(LOG.EVENT, "Dodged via pseudogiant_before_stomp")
+	end
+end
+
+local function on_stomp(victim, who, shit, bone_id)
+	if not CONFIG.enabled or not who then
+		return
+	end
+	mark_giant_stomping(who, "pseudogiant_on_stomp")
+end
+
+local function on_actor_before_hit(shit, bone_id, flags)
+	if should_dodge_hit(shit, "actor_on_before_hit") then
+		cancel_hit(shit, flags)
+	end
+end
+
+local function hook_shit_booster()
+	if shit_booster_hooked then
+		return true
+	end
+
+	local orig = _G.shit_booster
+	if type(orig) ~= "function" or orig[HOOK_MARK] then
+		return false
+	end
+
+	local wrapped = function(shit, bone_id, k_ap)
+		if should_dodge_hit(shit, "shit_booster") then
+			return
+		end
+		return orig(shit, bone_id, k_ap)
+	end
+	wrapped[HOOK_MARK] = true
+	_G.shit_booster = wrapped
+	shit_booster_hooked = true
+	flog("hooked _G.shit_booster")
+	return true
+end
+
+local function hook_actor_before_hit()
+	if actor_before_hit_hooked then
+		return true
+	end
+
+	local orig = CActor__BeforeHitCallback
+	if type(orig) ~= "function" or orig[HOOK_MARK] then
+		return false
+	end
+
+	local wrapped = function(actor, shit, bone_id)
+		if should_dodge_hit(shit, "CActor__BeforeHitCallback") then
+			return false
+		end
+		return orig(actor, shit, bone_id)
+	end
+	wrapped[HOOK_MARK] = true
+	CActor__BeforeHitCallback = wrapped
+	actor_before_hit_hooked = true
+	flog("hooked CActor__BeforeHitCallback")
+	return true
+end
+
+local function hook_stomp_animation()
+	if stomp_anim_hooked then
+		return true
+	end
+
+	local orig = _G.CPseudoGigant__OnStartStompAnimation
+	if type(orig) ~= "function" or orig[HOOK_MARK] then
+		return false
+	end
+
+	local wrapped = function(victim, who)
+		on_start_stomp_animation(victim, who)
+		return orig(victim, who)
+	end
+	wrapped[HOOK_MARK] = true
+	_G.CPseudoGigant__OnStartStompAnimation = wrapped
+	stomp_anim_hooked = true
+	flog("hooked CPseudoGigant__OnStartStompAnimation")
+	return true
+end
+
+local function install_hooks()
+	local hooked = {}
+	if hook_actor_before_hit() then
+		hooked[#hooked + 1] = "CActor__BeforeHitCallback"
+	end
+	if hook_stomp_animation() then
+		hooked[#hooked + 1] = "CPseudoGigant__OnStartStompAnimation"
+	end
+	if hook_shit_booster() then
+		hooked[#hooked + 1] = "shit_booster"
+	end
+	if #hooked > 0 then
+		flog("hooks installed: %s", table.concat(hooked, ", "))
+	elseif CONFIG.debug_log then
+		flog("hooks pending (shit_booster=%s)", tostring(type(_G.shit_booster)))
+	end
+end
+
+local function on_actor_first_update()
+	install_hooks()
+end
+
+function on_game_start()
+	DORN = _G[DORN_COMMON_VERSION].load(MOD_ID)
+
+	RegisterScriptCallback("pseudogiant_on_start_stomp_animation", on_start_stomp_animation)
+	RegisterScriptCallback("pseudogiant_before_stomp", on_before_stomp)
+	RegisterScriptCallback("pseudogiant_on_stomp", on_stomp)
+	RegisterScriptCallback("actor_on_before_hit", on_actor_before_hit)
+	RegisterScriptCallback("actor_on_first_update", on_actor_first_update)
+	RegisterScriptCallback("on_option_change", on_option_change)
+
+	install_hooks()
+
+	flog("loaded (pseudogiant_can_damage_objects_on_stomp=%s)", tostring(get_console() and get_console():get_bool("pseudogiant_can_damage_objects_on_stomp")))
+	log(LOG.EVENT, "loaded")
+end

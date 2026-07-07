@@ -25,7 +25,15 @@ function on_mcm_load()
 			{
 				id = "development",
 				sh = true,
+				text = "ui_mcm_dorn_giant_jump_development_section",
 				gr = {
+					{
+						id = "debug_overlay",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_giant_jump_debug_overlay",
+					},
 					{
 						id = "debug_log",
 						type = "check",

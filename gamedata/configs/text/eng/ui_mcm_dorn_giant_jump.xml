@@ -12,10 +12,19 @@
 	<string id="ui_mcm_dorn_giant_jump_enabled_desc">
 		<text>Cancel pseudogiant ground slam damage to the player while airborne.</text>
 	</string>
+	<string id="ui_mcm_dorn_giant_jump_development_section">
+		<text>Development</text>
+	</string>
+	<string id="ui_mcm_dorn_giant_jump_debug_overlay">
+		<text>Enable debug overlay</text>
+	</string>
+	<string id="ui_mcm_dorn_giant_jump_debug_overlay_desc">
+		<text>Show dodge/hit decisions in the debug overlay.</text>
+	</string>
 	<string id="ui_mcm_dorn_giant_jump_debug_log">
-		<text>Debug log</text>
+		<text>Enable debug logging</text>
 	</string>
 	<string id="ui_mcm_dorn_giant_jump_debug_log_desc">
-		<text>Print dodge/hit decisions to the on-screen debug log.</text>
+		<text>Write dodge/hit decisions to the game log file.</text>
 	</string>
 </string_table>
