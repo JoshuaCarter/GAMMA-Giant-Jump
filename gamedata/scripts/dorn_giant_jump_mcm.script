@@ -1,0 +1,40 @@
+function on_mcm_load()
+	return {
+		id = "dorn_giant_jump",
+		text = "Dorn's Giant Jump",
+		gr = {
+			{
+				id = "main",
+				sh = true,
+				text = "Main",
+				gr = {
+					{
+						id = "main_description",
+						type = "desc",
+						text = "ui_mcm_dorn_giant_jump_main_description",
+					},
+					{
+						id = "enabled",
+						type = "check",
+						val = 1,
+						def = true,
+						hint = "dorn_giant_jump_enabled",
+					},
+				},
+			},
+			{
+				id = "development",
+				sh = true,
+				gr = {
+					{
+						id = "debug_log",
+						type = "check",
+						val = 1,
+						def = false,
+						hint = "dorn_giant_jump_debug_log",
+					},
+				},
+			},
+		},
+	}
+end
