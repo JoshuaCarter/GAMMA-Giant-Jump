@@ -20,30 +20,23 @@ local DORN
 local CONFIG = {
 	enabled = true,
 	debug_log = false,
-	debug_overlay = false,
 }
 
-local LOG = {
-	EVENT = { order = 0, color = "yellow" },
-}
-
-local HOOK_MARK = "__dorn_giant_jump_hook"
-
--- threaten_effector time is 2.0s; add margin for animation + grok delay
-local STOMP_WINDOW_MS = 2800
+local HOOK_STATE = _G.__dorn_giant_jump_hooks or {}
+_G.__dorn_giant_jump_hooks = HOOK_STATE
 
 local shit_booster_hooked = false
 local actor_before_hit_hooked = false
 local stomp_anim_hooked = false
+-- threaten_effector time is 2.0s; add margin for animation + grok delay
+local STOMP_WINDOW_MS = 2800
+
+local function hook_already_installed(key, current)
+	return HOOK_STATE[key] ~= nil and current == HOOK_STATE[key]
+end
 
 -- giant_id -> time_global() ms when stomp window expires
 local stomp_windows = {}
-
-local function log(slot, msg)
-	if DORN and DORN.dbg and CONFIG.debug_overlay then
-		DORN.dbg.overlay(MOD_ID, slot.order, "[GiantJump] " .. tostring(msg), slot.color)
-	end
-end
 
 local function flog(fmt, ...)
 	local ok, msg = pcall(string.format, fmt, ...)
@@ -181,8 +174,6 @@ end
 local function on_option_change()
 	CONFIG.enabled = DORN.mcm.bool(MOD_ID, "main/enabled", true)
 	CONFIG.debug_log = DORN.mcm.bool(MOD_ID, "development/debug_log", false)
-	CONFIG.debug_overlay = DORN.mcm.bool(MOD_ID, "development/debug_overlay", false)
-	DORN.dbg.set_enabled(MOD_ID, CONFIG.debug_overlay)
 end
 
 local function actor_is_airborne()
@@ -248,7 +239,7 @@ local function should_dodge_hit(shit, tag)
 		tostring(shit.power),
 		movement_state_str()
 	)
-	log(LOG.EVENT, "Dodged giant slam while airborne")
+	flog("Dodged giant slam while airborne")
 	return true
 end
 
@@ -282,7 +273,7 @@ local function on_before_stomp(victim, who, shit, bone_id, flags)
 	if actor_is_airborne() then
 		flags.ret_value = false
 		flog("CB pseudogiant_before_stomp DODGED")
-		log(LOG.EVENT, "Dodged via pseudogiant_before_stomp")
+		flog("Dodged via pseudogiant_before_stomp")
 	end
 end
 
@@ -300,12 +291,16 @@ local function on_actor_before_hit(shit, bone_id, flags)
 end
 
 local function hook_shit_booster()
+	if hook_already_installed("shit_booster", _G.shit_booster) then
+		shit_booster_hooked = true
+		return true
+	end
 	if shit_booster_hooked then
 		return true
 	end
 
 	local orig = _G.shit_booster
-	if type(orig) ~= "function" or orig[HOOK_MARK] then
+	if type(orig) ~= "function" then
 		return false
 	end
 
@@ -315,7 +310,7 @@ local function hook_shit_booster()
 		end
 		return orig(shit, bone_id, k_ap)
 	end
-	wrapped[HOOK_MARK] = true
+	HOOK_STATE.shit_booster = wrapped
 	_G.shit_booster = wrapped
 	shit_booster_hooked = true
 	flog("hooked _G.shit_booster")
@@ -323,12 +318,16 @@ local function hook_shit_booster()
 end
 
 local function hook_actor_before_hit()
+	if hook_already_installed("actor_before_hit", CActor__BeforeHitCallback) then
+		actor_before_hit_hooked = true
+		return true
+	end
 	if actor_before_hit_hooked then
 		return true
 	end
 
 	local orig = CActor__BeforeHitCallback
-	if type(orig) ~= "function" or orig[HOOK_MARK] then
+	if type(orig) ~= "function" then
 		return false
 	end
 
@@ -338,7 +337,7 @@ local function hook_actor_before_hit()
 		end
 		return orig(actor, shit, bone_id)
 	end
-	wrapped[HOOK_MARK] = true
+	HOOK_STATE.actor_before_hit = wrapped
 	CActor__BeforeHitCallback = wrapped
 	actor_before_hit_hooked = true
 	flog("hooked CActor__BeforeHitCallback")
@@ -346,12 +345,16 @@ local function hook_actor_before_hit()
 end
 
 local function hook_stomp_animation()
+	if hook_already_installed("stomp_animation", _G.CPseudoGigant__OnStartStompAnimation) then
+		stomp_anim_hooked = true
+		return true
+	end
 	if stomp_anim_hooked then
 		return true
 	end
 
 	local orig = _G.CPseudoGigant__OnStartStompAnimation
-	if type(orig) ~= "function" or orig[HOOK_MARK] then
+	if type(orig) ~= "function" then
 		return false
 	end
 
@@ -359,7 +362,7 @@ local function hook_stomp_animation()
 		on_start_stomp_animation(victim, who)
 		return orig(victim, who)
 	end
-	wrapped[HOOK_MARK] = true
+	HOOK_STATE.stomp_animation = wrapped
 	_G.CPseudoGigant__OnStartStompAnimation = wrapped
 	stomp_anim_hooked = true
 	flog("hooked CPseudoGigant__OnStartStompAnimation")
@@ -401,5 +404,4 @@ function on_game_start()
 	install_hooks()
 
 	flog("loaded (pseudogiant_can_damage_objects_on_stomp=%s)", tostring(get_console() and get_console():get_bool("pseudogiant_can_damage_objects_on_stomp")))
-	log(LOG.EVENT, "loaded")
 end
