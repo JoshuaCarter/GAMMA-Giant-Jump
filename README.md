@@ -1,6 +1,6 @@
 # Dorn's Giant Jump
 
-Jump to dodge a pseudogiant's ground slam for **S.T.A.L.K.E.R. G.A.M.M.A.** — if you're airborne the instant the slam lands, you take no damage. Does NOT prevent the slow effect.
+Jump to dodge damage from a pseudogiant's ground slam for **S.T.A.L.K.E.R. G.A.M.M.A.** — Does not prevent the slow effect.
 
 ## Demo
 
