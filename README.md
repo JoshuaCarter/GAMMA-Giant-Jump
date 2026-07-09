@@ -4,7 +4,7 @@ Jump to dodge damage from a pseudogiant's ground slam for **S.T.A.L.K.E.R. G.A.M
 
 ## Demo
 
-https://github.com/JoshuaCarter/GAMMA-Giant-Jump/raw/main/jump.mp4
+https://github.com/user-attachments/assets/81019eb4-754c-4cef-b9fa-a21cb76a861b
 
 ## Installation
 
