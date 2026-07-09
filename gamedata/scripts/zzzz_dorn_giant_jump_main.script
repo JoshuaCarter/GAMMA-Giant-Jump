@@ -47,7 +47,7 @@ function on_game_start()
 		local slam = false
 		if shit and shit.draftsman and shit.type == hit.strike then
 			local ok, sec = pcall(function() return shit.draftsman:section() end)
-			slam = ok and sec and string.find(sec, "gigant") ~= nil
+			slam = ok and sec and string.find(sec, "gigant", 1, true) ~= nil
 		end
 
 		local airborne = false
