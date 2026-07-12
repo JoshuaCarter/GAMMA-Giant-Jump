@@ -8,6 +8,7 @@ end
 
 
 
+
 function on_mcm_load()
 	local MCM = dorn_mcm()
 	return {
@@ -31,7 +32,7 @@ function on_mcm_load()
 						def = true,
 						hint = "dorn_giant_jump_enabled",
 					},
-				},
+				}),
 			},
 			{
 				id = "development",
@@ -45,7 +46,7 @@ function on_mcm_load()
 						def = false,
 						hint = "dorn_giant_jump_debug_log",
 					},
-				},
+				}),
 			},
 		},
 	}
